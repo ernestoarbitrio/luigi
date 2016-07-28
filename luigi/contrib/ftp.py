@@ -44,7 +44,6 @@ logger = logging.getLogger('luigi-interface')
 
 
 class RemoteFileSystem(luigi.target.FileSystem):
-
     def __init__(self, host, username=None, password=None, port=None, tls=False, timeout=60, sftp=False):
         self.host = host
         self.username = username
@@ -131,18 +130,24 @@ class RemoteFileSystem(luigi.target.FileSystem):
         return exists
 
     def _ftp_exists(self, path, mtime):
-        dirname, fn = os.path.split(path)
-
-        files = self.conn.nlst(dirname)
-
-        exists = False
-        if path in files or fn in files:
-            if mtime:
-                mdtm = self.conn.sendcmd('MDTM ' + path)
-                modified = datetime.datetime.strptime(mdtm[4:], "%Y%m%d%H%M%S")
-                exists = modified > mtime
-            else:
-                exists = True
+        try:
+            self.conn.cwd(path)
+            exists = True
+        except ftplib.all_errors:
+            # check if path is a file
+            path_parts = path.split('/')
+            fn = path_parts[-1]
+            path = '/'.join(path_parts[:-1])
+            files = self.conn.nlst(path)
+            exists = False
+            if '{}/{}'.format(path, fn) in files:
+                if mtime:
+                    mdtm = self.conn.sendcmd('MDTM ' + path)
+                    modified = datetime.datetime.strptime(mdtm[4:], "%Y%m%d%H%M%S")
+                    exists = modified > mtime
+                else:
+                    exists = True
+            pass
         return exists
 
     def remove(self, path, recursive=True):
@@ -219,8 +224,8 @@ class RemoteFileSystem(luigi.target.FileSystem):
                 continue
 
             try:
-                ftp.cwd(name)   # if we can cwd to it, it's a folder
-                ftp.cwd(wd)   # don't try a nuke a folder we're in
+                ftp.cwd(name)  # if we can cwd to it, it's a folder
+                ftp.cwd(wd)  # don't try a nuke a folder we're in
                 ftp.cwd(path)  # then go back to where we were
                 self._rm_recursive(ftp, name)
             except ftplib.all_errors as e:
@@ -287,15 +292,17 @@ class RemoteFileSystem(luigi.target.FileSystem):
 
     def get(self, path, local_path):
         """
-        Download file from (s)FTP to local filesystem.
+        Download a single file from (s)FTP to local filesystem.
+        param path: the remote path on the FTP filesystem
+        type path: str
+        param local_path: the local path where save the file
+        type local_path: str
         """
-        normpath = os.path.normpath(local_path)
-        folder = os.path.dirname(normpath)
-        if folder and not os.path.exists(folder):
-            os.makedirs(folder)
-
-        tmp_local_path = local_path + '-luigi-tmp-%09d' % random.randrange(0, 1e10)
-
+        normpath = os.path.normpath(local_path)  # normalize the path trimming /
+        folder = os.path.dirname(normpath)   # the destination directory
+        if folder and not os.path.exists(normpath):
+            os.makedirs(normpath)
+        tmp_local_path = normpath + '/%s-luigi-tmp-%09d' % (os.path.split(path)[-1:][0], random.randrange(0, 1e10))
         # download file
         self._connect()
 
@@ -306,7 +313,7 @@ class RemoteFileSystem(luigi.target.FileSystem):
 
         self._close()
 
-        os.rename(tmp_local_path, local_path)
+        os.rename(tmp_local_path, '{}/{}'.format(local_path, os.path.split(path)[-1:][0]))
 
     def _sftp_get(self, path, tmp_local_path):
         self.conn.get(path, tmp_local_path)
@@ -348,9 +355,9 @@ class RemoteTarget(luigi.target.FileSystemTarget):
     """
 
     def __init__(
-        self, path, host, format=None, username=None,
-        password=None, port=None, mtime=None, tls=False,
-        timeout=60, sftp=False
+            self, path, host, format=None, username=None,
+            password=None, port=None, mtime=None, tls=False,
+            timeout=60, sftp=False
     ):
         if format is None:
             format = luigi.format.get_default_format()
