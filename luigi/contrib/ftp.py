@@ -315,11 +315,48 @@ class RemoteFileSystem(luigi.target.FileSystem):
 
         os.rename(tmp_local_path, '{}/{}'.format(local_path, os.path.split(path)[-1:][0]))
 
+    def getall(self, path, local_path):
+        """
+        Download all files from (s)FTP directory to local filesystem.
+        param path: the remote path on the FTP filesystem
+        type path: str
+        param local_path: the local path where save the file
+        type local_path: str
+        """
+
+        normpath = os.path.normpath(local_path)  # normalize the path trimming /
+        folder = os.path.dirname(normpath)  # the destination directory
+        if folder and not os.path.exists(normpath):
+            os.makedirs(normpath)
+
+        # download file
+        self._connect()
+
+        if self.sftp:
+            self._sftp_getall(path, local_path)
+        else:
+            self._ftp_getall(path, local_path)
+
+        self._close()
+
     def _sftp_get(self, path, tmp_local_path):
         self.conn.get(path, tmp_local_path)
 
     def _ftp_get(self, path, tmp_local_path):
         self.conn.retrbinary('RETR %s' % path, open(tmp_local_path, 'wb').write)
+
+    def _sftp_getall(self, path, local_path):
+        self.conn.get_r(path, local_path, preserve_mtime=False)
+
+    def _ftp_getall(self, path, local_path):
+        transferlist = self.conn.nlst(path)
+        for fl in transferlist:
+            # open a new local file foreach element in filelist
+            fileobj = open(local_path + '/' + fl, 'wb')
+            # Download the file a chunk at a time using RETR
+            self.conn.retrbinary('RETR ' + fl, fileobj.write)
+            # Close the file
+            fileobj.close()
 
 
 class AtomicFtpFile(luigi.target.AtomicLocalFile):
