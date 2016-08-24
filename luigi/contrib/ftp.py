@@ -349,14 +349,24 @@ class RemoteFileSystem(luigi.target.FileSystem):
         self.conn.get_r(path, local_path, preserve_mtime=False)
 
     def _ftp_getall(self, path, local_path):
-        transferlist = self.conn.nlst(path)
+        if path:
+            transferlist = self.conn.nlst(path)
+        else:
+            transferlist = self.conn.nlst()
         for fl in transferlist:
+            if '/' in fl:
+                flt = fl.split('/')[-1:][0]
+            else:
+                flt = fl
             # open a new local file foreach element in filelist
-            fileobj = open(local_path + '/' + fl, 'wb')
-            # Download the file a chunk at a time using RETR
-            self.conn.retrbinary('RETR ' + fl, fileobj.write)
-            # Close the file
-            fileobj.close()
+            try:
+                fileobj = open(os.path.join(local_path, flt), 'wb')
+                # Download the file a chunk at a time using RETR
+                self.conn.retrbinary('RETR %s' % fl, fileobj.write)
+                # Close the file
+                fileobj.close()
+            except OSError:
+                pass
 
 
 class AtomicFtpFile(luigi.target.AtomicLocalFile):
